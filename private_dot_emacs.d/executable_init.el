@@ -36,6 +36,17 @@
   (save-place-mode 1)
   (global-auto-revert-mode 1)
 
+  ;; Keep backup, autosave, and lock files out of project directories.
+  (let ((backup-dir (locate-user-emacs-file "backups/"))
+        (auto-save-dir (locate-user-emacs-file "autosaves/"))
+        (lock-dir (locate-user-emacs-file "locks/")))
+    (dolist (dir (list backup-dir auto-save-dir lock-dir))
+      (make-directory dir t))
+    (setq backup-directory-alist `(("." . ,backup-dir))
+          auto-save-file-name-transforms `((".*" ,auto-save-dir t))
+          lock-file-name-transforms `((".*" ,lock-dir t))
+          auto-save-list-file-prefix (expand-file-name ".saves-" auto-save-dir)))
+
   ;; Appearance.
   (set-face-attribute 'default nil
                       :font "JetBrainsMono Nerd Font Mono"
@@ -226,4 +237,3 @@
 	     (setq buffer-undo-list (cons (cons end (point)) buffer-undo-list))))
       (end-of-line)
       (next-line arg))
-
