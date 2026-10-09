@@ -30,7 +30,6 @@
 (use-package emacs
   :bind (("M-<up>"         . scroll-down-keep-cursor-fast)
          ("M-<down>"       . scroll-up-keep-cursor-fast)
-         ("C-c d"          . duplicate-line)
          ("C-c ;"          . comment-or-uncomment-region-or-line)
          ("C-c ."          . complete-symbol)
          ("<mouse-4>"      . scroll-down-line)
@@ -38,7 +37,11 @@
          ("C-x C-<right>"  . my/next-file-buffer)
          ("C-x C-<left>"   . my/previous-file-buffer)
          ("C-c C-<right>"  . forward-sexp)
-         ("C-c C-<left>"   . backward-sexp))
+         ("C-c C-<left>"   . backward-sexp)
+         ("C-c d"          . duplicate-line-or-region)
+         ("C-x 4 t"        . toggle-window-split)
+         ("C-c n"          . narrow-or-widen-dwim)
+         ("C-a"            . smart-beginning-of-line))
 
   :bind-keymap (("C-c l" . my-lsp-prefix-map)
                 ("C-c D" . my-diagnostics-map))
@@ -149,7 +152,7 @@
 ;; Plugins
 ;; ---------------------------------------------------------------------------
 (use-package company
-  :init (company-mode))
+  :init (company-mode 1))
 
 (use-package which-key
   :init (which-key-mode 1))
@@ -289,19 +292,67 @@
     (end-of-line)
     (forward-line 1)))
 
-(defun duplicate-line (arg)
-  "Duplicate the current line ARG times, leaving point in the lower line."
-  (interactive "*p")
-  (setq buffer-undo-list (cons (point) buffer-undo-list))
-  (let ((beg (save-excursion (beginning-of-line) (point))) end)
-    (save-excursion
-      (end-of-line)
-      (setq end (point))
-      (let ((line (buffer-substring beg end)) (buffer-undo-list t) (count arg))
-        (while (> count 0)
-          (newline)
-          (insert line)
-          (setq count (1- count))))
-      (setq buffer-undo-list (cons (cons end (point)) buffer-undo-list))))
-  (end-of-line)
-  (forward-line arg))
+(defun smart-beginning-of-line ()
+  "Move point to first non-whitespace character, or BOL if already there."
+  (interactive)
+  (let ((oldpos (point)))
+    (back-to-indentation)
+    (and (= oldpos (point)) (beginning-of-line))))
+
+(defun duplicate-line-or-region (&optional n)
+  "Duplicate current line, or region if active, N times."
+  (interactive "p")
+  (let (beg end (origin (point)))
+    (if (and (region-active-p) (> (point) (mark)))
+        (exchange-point-and-mark))
+    (setq beg (line-beginning-position))
+    (when (region-active-p) (exchange-point-and-mark))
+    (setq end (line-end-position))
+    (let ((region (buffer-substring-no-properties beg end)))
+      (dotimes (_ (or n 1))
+        (goto-char end) (newline) (insert region) (setq end (point)))
+      (goto-char (+ origin (* (length region) (or n 1)) (or n 1))))))
+
+(defun rename-current-buffer-file ()
+  "Rename current buffer and the file it is visiting."
+  (interactive)
+  (let* ((filename (buffer-file-name)))
+    (unless (and filename (file-exists-p filename))
+      (error "Buffer is not visiting a file"))
+    (let ((new-name (read-file-name "New name: " (file-name-directory filename))))
+      (rename-file filename new-name 1)
+      (rename-buffer new-name)
+      (set-visited-file-name new-name)
+      (set-buffer-modified-p nil))))
+
+(defun toggle-window-split ()
+  "Swap between horizontal and vertical split for exactly two windows."
+  (interactive)
+  (when (= (count-windows) 2)
+    (let* ((this-win-buffer (window-buffer))
+           (next-win-buffer (window-buffer (next-window)))
+           (this-win-edges (window-edges (selected-window)))
+           (next-win-edges (window-edges (next-window)))
+           (this-win-2nd (not (and (<= (car this-win-edges) (car next-win-edges))
+                                    (<= (cadr this-win-edges) (cadr next-win-edges)))))
+           (splitter (if (= (car this-win-edges) (car (window-edges (next-window))))
+                         'split-window-horizontally
+                       'split-window-vertically)))
+      (delete-other-windows)
+      (let ((first-win (selected-window)))
+        (funcall splitter)
+        (when this-win-2nd (other-window 1))
+        (set-window-buffer (selected-window) this-win-buffer)
+        (set-window-buffer (next-window) next-win-buffer)
+        (select-window first-win)
+        (when this-win-2nd (other-window 1))))))
+
+(defun narrow-or-widen-dwim (p)
+  "Widen if narrowed; else narrow to region, defun, or org subtree."
+  (interactive "P")
+  (cond ((and (buffer-narrowed-p) (not p)) (widen))
+        ((region-active-p) (narrow-to-region (region-beginning) (region-end)))
+        ((derived-mode-p 'org-mode) (org-narrow-to-subtree))
+        ((derived-mode-p 'prog-mode) (narrow-to-defun))
+        (t (error "Nothing to narrow to"))))
+
