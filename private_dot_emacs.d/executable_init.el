@@ -74,8 +74,6 @@
   (menu-bar-mode -1)
   (column-number-mode 1)
   (global-display-line-numbers-mode 0)
-  ;; Turn off use of tabs for indentation in many modes
-  (indent-tabs-mode nil)
   ;; turn on paren matching
   (show-paren-mode t)
   (electric-pair-mode 1)
@@ -120,7 +118,10 @@
   ;; scroll just one line when hitting bottom of the window
   (scroll-conservatively 10000)
   ;; keyboard scroll one line at a time
-  (scroll-step 1) 
+  (scroll-step 1)
+  ;; Turn off use of tabs for indentation in many modes
+  (indent-tabs-mode nil)
+
   
   :hook
   ((org-mode term-mode shell-mode eshell-mode) . my/disable-line-numbers)
