@@ -140,11 +140,14 @@
 ;; ---------------------------------------------------------------------------
 (use-package eglot
   :ensure nil
+  :hook ((python-mode python-ts-mode rust-mode rust-ts-mode)
+         . eglot-ensure)
   :config
   (setq eglot-ignored-server-capabilities
         (append eglot-ignored-server-capabilities
                 '(:inlayHintProvider)))
   (add-to-list 'eglot-server-programs '(python-mode . ("ty" "server")))
+  (add-to-list 'eglot-server-programs '(python-ts-mode . ("ty" "server")))
   (add-to-list 'eglot-server-programs '(rust-mode . ("rust-analyzer")))
   (add-to-list 'eglot-server-programs '(rust-ts-mode . ("rust-analyzer"))))
 
@@ -152,7 +155,23 @@
 ;; Plugins
 ;; ---------------------------------------------------------------------------
 (use-package company
-  :init (company-mode 1))
+  :hook ((python-mode python-ts-mode rust-mode rust-ts-mode)
+         . company-mode)
+  :config
+  (defun my/company-prefix-first (candidates)
+    "Put matches starting with `company-prefix' before other matches."
+    (if (not (stringp company-prefix))
+        candidates
+      (append
+       (cl-remove-if-not
+        (lambda (candidate)
+          (string-prefix-p company-prefix candidate completion-ignore-case))
+        candidates)
+       (cl-remove-if
+        (lambda (candidate)
+          (string-prefix-p company-prefix candidate completion-ignore-case))
+        candidates))))
+  (add-to-list 'company-transformers #'my/company-prefix-first t))
 
 (use-package which-key
   :init (which-key-mode 1))
@@ -187,7 +206,8 @@
 (use-package orderless
   :custom
   (completion-styles '(orderless basic))
-  (completion-category-overrides '((file (styles basic partial-completion)))))
+  (completion-category-overrides
+   '((file (styles basic partial-completion)))))
 
 ;; -----------------------------
 ;; Marginalia — rich annotations in the minibuffer
@@ -355,4 +375,3 @@
         ((derived-mode-p 'org-mode) (org-narrow-to-subtree))
         ((derived-mode-p 'prog-mode) (narrow-to-defun))
         (t (error "Nothing to narrow to"))))
-
