@@ -21,7 +21,7 @@
       (error (message "WARNING: could not install use-package: %s" err)))))
 
 (require 'use-package)
-;; (setq use-package-always-ensure t)
+(setq use-package-always-ensure t)
 (add-to-list 'load-path (locate-user-emacs-file "lisp"))
 
 ;; ---------------------------------------------------------------------------
@@ -41,7 +41,7 @@
          ("C-c C-<left>"   . backward-sexp))
 
   :bind-keymap (("C-c l" . my-lsp-prefix-map)
-                ("C-c D" . my-diagnostics-map)) ;; FIXED: was "C-c d", clashed with duplicate-line
+                ("C-c D" . my-diagnostics-map))
 
   :custom
   ;; Keep Custom's generated settings out of this file.
@@ -62,6 +62,14 @@
   :init
   (define-prefix-command 'my-lsp-prefix-map)
   (define-prefix-command 'my-diagnostics-map)
+
+  ;; Support opening new minibuffers from inside existing minibuffers
+  (setq enable-recursive-minibuffers t)
+  ;; Hide commands in M-x which do not work in the current mode
+  (setq read-extended-command-predicate #'command-completion-default-include-p)
+  ;; Don't allow the cursor in the minibuffer prompt
+  (setq minibuffer-prompt-properties
+        '(read-only t cursor-intangible t face minibuffer-prompt))
 
   ;; custom-file is set via :custom above, which runs before :init, so safe here.
   (load custom-file 'noerror 'nomessage)
@@ -149,23 +157,89 @@
 (use-package rainbow-delimiters
   :hook (prog-mode . rainbow-delimiters-mode))
 
-(use-package marginalia
-  :init (marginalia-mode))
-
 (use-package multiple-cursors
   :init (multiple-cursors-mode)
   :bind (("C-d"   . mc/mark-next-like-this)
          ("C-S-d" . mc/mark-all-like-this)))
 
-(use-package helm
-  :demand t
-  :bind (("M-x"     . helm-M-x)
-         ("C-x C-f" . helm-find-files)
-         ("C-x b"   . helm-mini)
-         ("M-y"     . helm-show-kill-ring))
+;; -----------------------------
+;; Vertico — minimalist vertical completion UI
+;; -----------------------------
+(use-package vertico
+  :init
+  (vertico-mode 1)
+  :custom
+  (vertico-count 15)          ; number of candidates shown
+  (vertico-resize t)
+  (vertico-cycle t))
+
+;; Needed for Vertico to work well with Emacs' built-in completion
+(use-package savehist
+  :init
+  (savehist-mode 1))
+
+;; -----------------------------
+;; Orderless — flexible fuzzy/space-separated matching
+;; -----------------------------
+(use-package orderless
+  :custom
+  (completion-styles '(orderless basic))
+  (completion-category-overrides '((file (styles basic partial-completion)))))
+
+;; -----------------------------
+;; Marginalia — rich annotations in the minibuffer
+;; -----------------------------
+(use-package marginalia
+  :init
+  (marginalia-mode 1))
+
+;; -----------------------------
+;; Consult — enhanced search/navigation commands
+;; -----------------------------
+(use-package consult
+  :bind (("C-s" . consult-line)
+         ("C-x b" . consult-buffer)
+         ("M-y" . consult-yank-pop)
+         ("M-g g" . consult-goto-line)
+         ("M-g i" . consult-imenu)
+         ("M-g f" . consult-flymake)
+         ("C-c g" . consult-ripgrep)
+         ("C-c f" . consult-find))
+  :custom
+  (consult-narrow-key "<"))
+
+;; -----------------------------
+;; Embark — contextual actions
+;; -----------------------------
+(use-package embark
+  :bind (("C-c a" . embark-act)
+         ("C-c e" . embark-dwim)
+         ("C-h B" . embark-bindings))
+  :init
+  (setq prefix-help-command #'embark-prefix-help-command)
   :config
-  (require 'helm-mode)
-  (helm-mode 1))
+  (add-to-list 'display-buffer-alist
+               '("\\`\\*Embark Collect \\(Live\\|Completions\\)\\*"
+                 nil
+                 (window-parameters (mode-line-format . none)))))
+
+;; Integration between Embark and Consult
+(use-package embark-consult
+  :after (embark consult)
+  :hook
+  (embark-collect-mode . consult-preview-at-point-mode))
+
+(use-package rust-ts-mode
+  :if (and (fboundp 'treesit-available-p) (treesit-available-p))
+  :mode ("\\.rs\\'" . rust-ts-mode)
+  :init
+  (require 'treesit)
+  (unless (treesit-language-available-p 'rust)
+    (treesit-install-language-grammar 'rust)))
+
+(use-package indent-bars :hook (prog-mode . indent-bars-mode))
+
+(use-package avy :bind ("C-c j" . avy-goto-word-0))
 
 ;; ---------------------------------------------------------------------------
 ;; Function definitions
