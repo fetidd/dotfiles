@@ -31,7 +31,6 @@
   :bind (("M-<up>"         . scroll-down-keep-cursor-fast)
          ("M-<down>"       . scroll-up-keep-cursor-fast)
          ("C-c ;"          . comment-or-uncomment-region-or-line)
-         ("C-c ."          . complete-symbol)
          ("<mouse-4>"      . scroll-down-line)
          ("<mouse-5>"      . scroll-up-line)
          ("C-x C-<right>"  . my/next-file-buffer)
@@ -41,6 +40,9 @@
          ("C-c d"          . duplicate-line-or-region)
          ("C-x 4 t"        . toggle-window-split)
          ("C-c n"          . narrow-or-widen-dwim)
+         ("C-c k"          . delete-whole-line)
+         ("C-c <up>"       . move-line-up)
+         ("C-c <down>"     . move-line-down)
          ("C-a"            . smart-beginning-of-line))
 
   :bind-keymap (("C-c l" . my-lsp-prefix-map)
@@ -157,6 +159,8 @@
 (use-package company
   :hook ((python-mode python-ts-mode rust-mode rust-ts-mode)
          . company-mode)
+  :bind
+  ("C-c ." . company-complete)
   :config
   (defun my/company-prefix-first (candidates)
     "Put matches starting with `company-prefix' before other matches."
@@ -220,9 +224,9 @@
 ;; Consult — enhanced search/navigation commands
 ;; -----------------------------
 (use-package consult
-  :bind (("C-s" . consult-line)
+  :bind (("C-s"   . consult-line)
          ("C-x b" . consult-buffer)
-         ("M-y" . consult-yank-pop)
+         ("M-y"   . consult-yank-pop)
          ("M-g g" . consult-goto-line)
          ("M-g i" . consult-imenu)
          ("M-g f" . consult-flymake)
@@ -260,7 +264,10 @@
   (unless (treesit-language-available-p 'rust)
     (treesit-install-language-grammar 'rust)))
 
-(use-package indent-bars :hook (prog-mode . indent-bars-mode))
+(use-package indent-bars
+  :hook (prog-mode . indent-bars-mode)
+  :bind
+  ("C-c i" . indent-bars-mode))
 
 (use-package avy :bind ("C-c j" . avy-goto-word-0))
 
@@ -375,3 +382,29 @@
         ((derived-mode-p 'org-mode) (org-narrow-to-subtree))
         ((derived-mode-p 'prog-mode) (narrow-to-defun))
         (t (error "Nothing to narrow to"))))
+
+(defun delete-whole-line ()
+  "Delete the whole line at point without adding it to the kill ring."
+  (interactive)
+  (let ((column (current-column)))
+  (delete-region (line-beginning-position) (line-end-position))
+  (when (eolp)
+    (delete-char 1))
+  (move-to-column column)))
+
+(defun move-line-up ()
+  "Swap the current line with the line above it."
+  (interactive)
+  (let ((col (current-column)))
+    (transpose-lines 1)
+    (forward-line -2)
+    (move-to-column col)))
+
+(defun move-line-down ()
+  "Swap the current line with the line below it."
+  (interactive)
+  (let ((col (current-column)))
+    (forward-line 1)
+    (transpose-lines 1)
+    (forward-line -1)
+    (move-to-column col)))
