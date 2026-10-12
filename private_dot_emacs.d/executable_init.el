@@ -41,8 +41,8 @@
          ("C-x 4 t"        . toggle-window-split)
          ("C-c n"          . narrow-or-widen-dwim)
          ("C-c k"          . delete-whole-line)
-         ("C-c <up>"       . move-line-up)
-         ("C-c <down>"     . move-line-down)
+         ("C-c C-<up>"     . move-line-up)
+         ("C-c C-<down>"   . move-line-down)
          ("C-a"            . smart-beginning-of-line))
 
   :bind-keymap (("C-c l" . my-lsp-prefix-map)
