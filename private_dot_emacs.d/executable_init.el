@@ -392,19 +392,59 @@
     (delete-char 1))
   (move-to-column column)))
 
+(defun move-line--region-bounds ()
+  "Return (BEG . END) covering whole lines touched by the active region.
+BEG is the start of the first line in the region; END is the position
+just after the last line touched by the region (including its newline),
+unless the region's end sits exactly at a line start, in which case
+that line is excluded (since no part of it is actually selected)."
+  (let ((beg (region-beginning))
+        (end (region-end)))
+    (setq beg (save-excursion (goto-char beg) (line-beginning-position)))
+    (setq end (save-excursion
+                (goto-char end)
+                (if (and (bolp) (> end beg))
+                    (point)
+                  (line-beginning-position 2))))
+    (cons beg end)))
+
+(defun move-line--internal (direction)
+  "Move the current line, or all lines touched by the region, by DIRECTION.
+DIRECTION is -1 to move up, 1 to move down."
+  (if (use-region-p)
+      (let* ((bounds (move-line--region-bounds))
+             (beg (car bounds))
+             (end (cdr bounds))
+             (point-at-end (> (point) (mark))))
+        (cond
+         ((and (< direction 0) (= beg (point-min)))
+          (user-error "Cannot move region up: already at the top"))
+         ((and (> direction 0) (= end (point-max)) (not (eq (char-before end) ?\n)))
+          (user-error "Cannot move region down: already at the bottom"))
+         (t
+          (let ((text (delete-and-extract-region beg end)))
+            (goto-char beg)
+            (forward-line direction)
+            (let ((new-beg (point)))
+              (insert text)
+              (if point-at-end
+                  (progn (push-mark new-beg t t)
+                         (goto-char (+ new-beg (- end beg))))
+                (progn (goto-char new-beg)
+                       (push-mark (+ new-beg (- end beg)) t t)))
+              (setq deactivate-mark nil))))))
+    (let ((col (current-column)))
+      (if (< direction 0)
+          (progn (transpose-lines 1) (forward-line -2))
+        (progn (forward-line 1) (transpose-lines 1) (forward-line -1)))
+      (move-to-column col))))
+
 (defun move-line-up ()
-  "Swap the current line with the line above it."
+  "Swap the current line, or all lines touched by the region, with the line(s) above."
   (interactive)
-  (let ((col (current-column)))
-    (transpose-lines 1)
-    (forward-line -2)
-    (move-to-column col)))
+  (move-line--internal -1))
 
 (defun move-line-down ()
-  "Swap the current line with the line below it."
+  "Swap the current line, or all lines touched by the region, with the line(s) below."
   (interactive)
-  (let ((col (current-column)))
-    (forward-line 1)
-    (transpose-lines 1)
-    (forward-line -1)
-    (move-to-column col)))
+  (move-line--internal 1))
