@@ -23,6 +23,7 @@
 (require 'use-package)
 (setq use-package-always-ensure t)
 (add-to-list 'load-path (locate-user-emacs-file "lisp"))
+(load-file (locate-user-emacs-file "my-functions.el"))
 
 ;; ---------------------------------------------------------------------------
 ;; Core Emacs settings
@@ -41,9 +42,14 @@
          ("C-x 4 t"        . toggle-window-split)
          ("C-c n"          . narrow-or-widen-dwim)
          ("C-c k"          . delete-whole-line)
-         ("C-c C-<up>"     . move-line-up)
-         ("C-c C-<down>"   . move-line-down)
-         ("C-a"            . smart-beginning-of-line))
+         ("C-c <up>"       . move-line-up)
+         ("C-c <down>"     . move-line-down)
+         ("C-a"            . smart-beginning-of-line)
+         ("C-c C-<up>"     . my/sexp-up)
+         ("C-c C-<down>"   . my/sexp-down)
+         ("C-c ="          . my/increment-digit-or-region)
+         ("C-c -"          . my/decrement-digit-or-region)
+         )
 
   :bind-keymap (("C-c l" . my-lsp-prefix-map)
                 ("C-c D" . my-diagnostics-map))
@@ -271,180 +277,3 @@
 
 (use-package avy :bind ("C-c j" . avy-goto-word-0))
 
-;; ---------------------------------------------------------------------------
-;; Function definitions
-;; ---------------------------------------------------------------------------
-(defun my/next-file-buffer ()
-  "Switch to the next buffer visiting a file, skipping any non-file buffers."
-  (interactive)
-  (let ((start (current-buffer)))
-    (next-buffer)
-    (while (and (not (buffer-file-name))
-                (not (eq (current-buffer) start)))
-      (next-buffer))))
-
-(defun my/previous-file-buffer ()
-  "Switch to the previous buffer visiting a file, skipping any non-file buffers."
-  (interactive)
-  (let ((start (current-buffer)))
-    (previous-buffer)
-    (while (and (not (buffer-file-name))
-                (not (eq (current-buffer) start)))
-      (previous-buffer))))
-
-(defun scroll-down-keep-cursor ()
-  (interactive)
-  (scroll-down 2))
-
-(defun scroll-down-keep-cursor-fast ()
-  (interactive)
-  (scroll-down 5))
-
-(defun scroll-up-keep-cursor ()
-  (interactive)
-  (scroll-up 2))
-
-(defun scroll-up-keep-cursor-fast ()
-  (interactive)
-  (scroll-up 5))
-
-(defun comment-or-uncomment-region-or-line ()
-  "Comment or uncomment the region, or the current line if no active region."
-  (interactive)
-  (let (beg end)
-    (if (region-active-p)
-        (setq beg (region-beginning) end (region-end))
-      (setq beg (line-beginning-position) end (line-end-position)))
-    (comment-or-uncomment-region beg end)
-    (end-of-line)
-    (forward-line 1)))
-
-(defun smart-beginning-of-line ()
-  "Move point to first non-whitespace character, or BOL if already there."
-  (interactive)
-  (let ((oldpos (point)))
-    (back-to-indentation)
-    (and (= oldpos (point)) (beginning-of-line))))
-
-(defun duplicate-line-or-region (&optional n)
-  "Duplicate current line, or region if active, N times."
-  (interactive "p")
-  (let (beg end (origin (point)))
-    (if (and (region-active-p) (> (point) (mark)))
-        (exchange-point-and-mark))
-    (setq beg (line-beginning-position))
-    (when (region-active-p) (exchange-point-and-mark))
-    (setq end (line-end-position))
-    (let ((region (buffer-substring-no-properties beg end)))
-      (dotimes (_ (or n 1))
-        (goto-char end) (newline) (insert region) (setq end (point)))
-      (goto-char (+ origin (* (length region) (or n 1)) (or n 1))))))
-
-(defun rename-current-buffer-file ()
-  "Rename current buffer and the file it is visiting."
-  (interactive)
-  (let* ((filename (buffer-file-name)))
-    (unless (and filename (file-exists-p filename))
-      (error "Buffer is not visiting a file"))
-    (let ((new-name (read-file-name "New name: " (file-name-directory filename))))
-      (rename-file filename new-name 1)
-      (rename-buffer new-name)
-      (set-visited-file-name new-name)
-      (set-buffer-modified-p nil))))
-
-(defun toggle-window-split ()
-  "Swap between horizontal and vertical split for exactly two windows."
-  (interactive)
-  (when (= (count-windows) 2)
-    (let* ((this-win-buffer (window-buffer))
-           (next-win-buffer (window-buffer (next-window)))
-           (this-win-edges (window-edges (selected-window)))
-           (next-win-edges (window-edges (next-window)))
-           (this-win-2nd (not (and (<= (car this-win-edges) (car next-win-edges))
-                                    (<= (cadr this-win-edges) (cadr next-win-edges)))))
-           (splitter (if (= (car this-win-edges) (car (window-edges (next-window))))
-                         'split-window-horizontally
-                       'split-window-vertically)))
-      (delete-other-windows)
-      (let ((first-win (selected-window)))
-        (funcall splitter)
-        (when this-win-2nd (other-window 1))
-        (set-window-buffer (selected-window) this-win-buffer)
-        (set-window-buffer (next-window) next-win-buffer)
-        (select-window first-win)
-        (when this-win-2nd (other-window 1))))))
-
-(defun narrow-or-widen-dwim (p)
-  "Widen if narrowed; else narrow to region, defun, or org subtree."
-  (interactive "P")
-  (cond ((and (buffer-narrowed-p) (not p)) (widen))
-        ((region-active-p) (narrow-to-region (region-beginning) (region-end)))
-        ((derived-mode-p 'org-mode) (org-narrow-to-subtree))
-        ((derived-mode-p 'prog-mode) (narrow-to-defun))
-        (t (error "Nothing to narrow to"))))
-
-(defun delete-whole-line ()
-  "Delete the whole line at point without adding it to the kill ring."
-  (interactive)
-  (let ((column (current-column)))
-  (delete-region (line-beginning-position) (line-end-position))
-  (when (eolp)
-    (delete-char 1))
-  (move-to-column column)))
-
-(defun move-line--region-bounds ()
-  "Return (BEG . END) covering whole lines touched by the active region.
-BEG is the start of the first line in the region; END is the position
-just after the last line touched by the region (including its newline),
-unless the region's end sits exactly at a line start, in which case
-that line is excluded (since no part of it is actually selected)."
-  (let ((beg (region-beginning))
-        (end (region-end)))
-    (setq beg (save-excursion (goto-char beg) (line-beginning-position)))
-    (setq end (save-excursion
-                (goto-char end)
-                (if (and (bolp) (> end beg))
-                    (point)
-                  (line-beginning-position 2))))
-    (cons beg end)))
-
-(defun move-line--internal (direction)
-  "Move the current line, or all lines touched by the region, by DIRECTION.
-DIRECTION is -1 to move up, 1 to move down."
-  (if (use-region-p)
-      (let* ((bounds (move-line--region-bounds))
-             (beg (car bounds))
-             (end (cdr bounds))
-             (point-at-end (> (point) (mark))))
-        (cond
-         ((and (< direction 0) (= beg (point-min)))
-          (user-error "Cannot move region up: already at the top"))
-         ((and (> direction 0) (= end (point-max)) (not (eq (char-before end) ?\n)))
-          (user-error "Cannot move region down: already at the bottom"))
-         (t
-          (let ((text (delete-and-extract-region beg end)))
-            (goto-char beg)
-            (forward-line direction)
-            (let ((new-beg (point)))
-              (insert text)
-              (if point-at-end
-                  (progn (push-mark new-beg t t)
-                         (goto-char (+ new-beg (- end beg))))
-                (progn (goto-char new-beg)
-                       (push-mark (+ new-beg (- end beg)) t t)))
-              (setq deactivate-mark nil))))))
-    (let ((col (current-column)))
-      (if (< direction 0)
-          (progn (transpose-lines 1) (forward-line -2))
-        (progn (forward-line 1) (transpose-lines 1) (forward-line -1)))
-      (move-to-column col))))
-
-(defun move-line-up ()
-  "Swap the current line, or all lines touched by the region, with the line(s) above."
-  (interactive)
-  (move-line--internal -1))
-
-(defun move-line-down ()
-  "Swap the current line, or all lines touched by the region, with the line(s) below."
-  (interactive)
-  (move-line--internal 1))
