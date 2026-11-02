@@ -283,5 +283,182 @@ the up/down navigation sequence."
 
 
 
+(require 'subr-x)  ;; for string-trim
+
+;; ---------- helpers ----------
+
+(defconst my--bracket-pairs
+  '((?\{ . ?\}) (?\[ . ?\]) (?\( . ?\)))
+  "Alist of opening/closing bracket characters we support.")
+
+(defun my--matching-close (open-char)
+  "Return the closing bracket character matching OPEN-CHAR, or nil."
+  (cdr (assq open-char my--bracket-pairs)))
+
+(defun my--split-top-level-commas (s)
+  "Split string S on commas that are not nested inside (), [], {}
+or inside a quoted string. Returns a list of substrings."
+  (let ((result nil)
+        (start 0)
+        (depth 0)
+        (len (length s))
+        (in-string nil)
+        (quote-char nil)
+        (i 0))
+    (while (< i len)
+      (let ((c (aref s i)))
+        (cond
+         (in-string
+          (cond
+           ((eq c ?\\) (setq i (1+ i)))
+           ((eq c quote-char) (setq in-string nil))))
+         ((or (eq c ?\") (eq c ?\'))
+          (setq in-string t quote-char c))
+         ((memq c '(?\{ ?\[ ?\()) (setq depth (1+ depth)))
+         ((memq c '(?\} ?\] ?\))) (setq depth (1- depth)))
+         ((and (eq c ?,) (= depth 0))
+          (push (substring s start i) result)
+          (setq start (1+ i)))))
+      (setq i (1+ i)))
+    (push (substring s start len) result)
+    (nreverse result)))
+
+;; ---------- collapse (multi-line -> single-line) ----------
+
+(defun my--collapse-bracketed (start end)
+  (let* ((text (buffer-substring-no-properties start end))
+         (lines (split-string text "\n" t))
+         (trimmed (mapcar #'string-trim lines))
+         (joined (string-join trimmed " ")))
+    (setq joined (replace-regexp-in-string "\\([{[(]\\) +" "\\1" joined))
+    (setq joined (replace-regexp-in-string " +\\([])}]\\)" "\\1" joined))
+    (delete-region start end)
+    (goto-char start)
+    (insert joined)))
+
+;; ---------- expand (single-line -> multi-line) ----------
+
+(defun my--expand-bracketed (start end)
+  (let* ((text (buffer-substring-no-properties start end))
+         (trimmed (string-trim text))
+         (open-char (aref trimmed 0))
+         (close-char (aref trimmed (1- (length trimmed))))
+         (inner (string-trim (substring trimmed 1 -1)))
+         (items (if (= (length inner) 0)
+                    nil
+                  (my--split-top-level-commas inner)))
+         (items (mapcar #'string-trim items))
+         (items (delete "" items))
+         (base-indent (save-excursion
+                        (goto-char start)
+                        (back-to-indentation)
+                        (buffer-substring-no-properties
+                         (line-beginning-position) (point))))
+         (item-indent (concat base-indent "    "))
+         (result (concat (string open-char) "\n"
+                          (mapconcat (lambda (it) (concat item-indent it ","))
+                                     items "\n")
+                          "\n" base-indent (string close-char))))
+    (delete-region start end)
+    (goto-char start)
+    (insert result)))
+
+;; ---------- toggle ----------
+
+(defun my-toggle-bracketed-format (start end)
+  "Toggle a Python dict/list/set/tuple literal in the region between
+single-line and multi-line (one entry per line) formats.
+
+Supports {}, [] and () as the outer delimiters. If the region (after
+trimming whitespace) does not start and end with a matching bracket
+pair, does nothing and reports an error via `message'."
+  (interactive "r")
+  (let* ((text (buffer-substring-no-properties start end))
+         (trimmed (string-trim text))
+         (open-char (and (> (length trimmed) 1) (aref trimmed 0)))
+         (expected-close (and open-char (my--matching-close open-char)))
+         (actual-close (and (> (length trimmed) 1)
+                             (aref trimmed (1- (length trimmed))))))
+    (cond
+     ((not (and expected-close (eq actual-close expected-close)))
+      (message "Region does not look like a bracketed literal ({}, [], or ())"))
+     ((string-match-p "\n" trimmed)
+      (my--collapse-bracketed start end))
+     (t
+      (my--expand-bracketed start end)))))
+	  
+	  
+	  
+(defvar-local my-sexp-locus nil
+  "Buffer position remembered as the origin point for sexp
+expand/contract. Bounds at any DEPTH are recomputed from here.")
+
+(defvar-local my-sexp-depth 0
+  "Current expansion depth relative to `my-sexp-locus'.
+0 = innermost sexp at the locus; each increment means one more
+`backward-up-list' step outward.")
+
+(defun my--sexp-bounds-at-depth (origin depth)
+  "Return (BEG . END) of the sexp enclosing ORIGIN at nesting DEPTH.
+DEPTH 0 is the innermost sexp at ORIGIN; each increment steps one
+level further out via `backward-up-list'. Returns nil if DEPTH is
+too large (no enclosing sexp at that level)."
+  (save-excursion
+    (goto-char origin)
+    (if (= depth 0)
+        (bounds-of-thing-at-point 'sexp)
+      (condition-case nil
+          (progn
+            (dotimes (_ depth)
+              (backward-up-list))
+            (let ((beg (point)))
+              (forward-sexp)
+              (cons beg (point))))
+        (scan-error nil)))))
+
+(defun my--sexp-continuing-p ()
+  "Non-nil if the previous command was one of our expand/contract
+commands, meaning it's safe to keep using the stored locus/depth."
+  (memq last-command '(my-expand-to-parent-sexp my-contract-sexp)))
+
+(defun my-expand-to-parent-sexp ()
+  "Expand the region outward to the next enclosing sexp.
+
+If not continuing a previous expand/contract sequence (i.e. the
+command chain was interrupted, or there's no active region), the
+current point is taken as a fresh locus at depth 0."
+  (interactive)
+  (unless (my--sexp-continuing-p)
+    (setq my-sexp-locus (point)
+          my-sexp-depth -1))   ; -1 so the increment below lands on 0
+  (let* ((new-depth (1+ my-sexp-depth))
+         (bounds (my--sexp-bounds-at-depth my-sexp-locus new-depth)))
+    (if (not bounds)
+        (message "No further enclosing sexp found")
+      (setq my-sexp-depth new-depth)
+      (set-mark (car bounds))
+      (goto-char (cdr bounds))
+      (activate-mark))))
+
+(defun my-contract-sexp ()
+  "Contract the region inward to the previous (smaller) sexp,
+undoing the last `my-expand-to-parent-sexp' step."
+  (interactive)
+  (if (or (not (my--sexp-continuing-p)) (<= my-sexp-depth 0))
+      (message "No smaller sexp to contract to")
+    (let* ((new-depth (1- my-sexp-depth))
+           (bounds (my--sexp-bounds-at-depth my-sexp-locus new-depth)))
+      (if (not bounds)
+          (message "No smaller sexp to contract to")
+        (setq my-sexp-depth new-depth)
+        (set-mark (car bounds))
+        (goto-char (cdr bounds))
+        (activate-mark)))))
+
+
+
+
 ;; keep this at the end!
 (provide 'my-functions)
+
+

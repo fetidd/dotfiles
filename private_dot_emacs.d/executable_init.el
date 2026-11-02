@@ -47,12 +47,13 @@
          ("C-a"            . smart-beginning-of-line)
          ("C-c C-<up>"     . my/sexp-up)
          ("C-c C-<down>"   . my/sexp-down)
-         ("C-c ="          . my/increment-digit-or-region)
-         ("C-c -"          . my/decrement-digit-or-region)
+         ("C-c ="          . my-expand-to-parent-sexp)
+         ("C-c -"          . my-contract-sexp)
          )
-
   :bind-keymap (("C-c l" . my-lsp-prefix-map)
+                ("C-c p" . my-python-map)
                 ("C-c D" . my-diagnostics-map))
+
 
   :custom
   ;; Keep Custom's generated settings out of this file.
@@ -73,6 +74,7 @@
   :init
   (define-prefix-command 'my-lsp-prefix-map)
   (define-prefix-command 'my-diagnostics-map)
+  (define-prefix-command 'my-python-map)
 
   ;; Support opening new minibuffers from inside existing minibuffers
   (setq enable-recursive-minibuffers t)
@@ -139,6 +141,8 @@
   (define-key my-diagnostics-map (kbd "n") #'flymake-goto-next-error)
   (define-key my-diagnostics-map (kbd "p") #'flymake-goto-prev-error)
   (define-key my-diagnostics-map (kbd "a") #'flymake-show-project-diagnostics)
+
+  (define-key my-python-map (kbd "d") #'my-toggle-bracketed-format)
 
   :hook
   ((org-mode term-mode shell-mode eshell-mode) . my/disable-line-numbers))
