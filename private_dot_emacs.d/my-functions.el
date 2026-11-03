@@ -281,8 +281,6 @@ the up/down navigation sequence."
     (when my/sexp-nav-stack
       (my/sexp-nav-reset))))
 
-
-
 (require 'subr-x)  ;; for string-trim
 
 ;; ---------- helpers ----------
@@ -388,7 +386,7 @@ pair, does nothing and reports an error via `message'."
       (my--expand-bracketed start end)))))
 	  
 	  
-	  
+;; functions to expand and contract selection of current sexp  
 (defvar-local my-sexp-locus nil
   "Buffer position remembered as the origin point for sexp
 expand/contract. Bounds at any DEPTH are recomputed from here.")
@@ -400,21 +398,32 @@ expand/contract. Bounds at any DEPTH are recomputed from here.")
 
 (defun my--sexp-bounds-at-depth (origin depth)
   "Return (BEG . END) of the sexp enclosing ORIGIN at nesting DEPTH.
-DEPTH 0 is the innermost sexp at ORIGIN; each increment steps one
+DEPTH 0 is the innermost sexp at ORIGIN (or, if point isn't directly
+on/in a sexp, the nearest enclosing list); each increment steps one
 level further out via `backward-up-list'. Returns nil if DEPTH is
 too large (no enclosing sexp at that level)."
   (save-excursion
     (goto-char origin)
-    (if (= depth 0)
-        (bounds-of-thing-at-point 'sexp)
-      (condition-case nil
-          (progn
-            (dotimes (_ depth)
-              (backward-up-list))
-            (let ((beg (point)))
-              (forward-sexp)
-              (cons beg (point))))
-        (scan-error nil)))))
+    ;; `forward-sexp'/`backward-up-list' assume point is not inside a
+    ;; string or comment, and misbehave if it is (they haven't seen
+    ;; the opening delimiter, so they lose track of the syntactic
+    ;; state). `syntax-ppss' parses properly from a safe point, so use
+    ;; it to detect this and reposition to the start of the string or
+    ;; comment before doing any scanning.
+    (let ((str-or-comment-start (nth 8 (syntax-ppss))))
+      (when str-or-comment-start
+        (goto-char str-or-comment-start)))
+    (condition-case nil
+        (let ((extra (if (bounds-of-thing-at-point 'sexp) 0 1)))
+          (if (and (= depth 0) (= extra 0))
+              (bounds-of-thing-at-point 'sexp)
+            (progn
+              (dotimes (_ (+ depth extra))
+                (backward-up-list))
+              (let ((beg (point)))
+                (forward-sexp)
+                (cons beg (point))))))
+      (scan-error nil))))
 
 (defun my--sexp-continuing-p ()
   "Non-nil if the previous command was one of our expand/contract
@@ -442,10 +451,18 @@ current point is taken as a fresh locus at depth 0."
 
 (defun my-contract-sexp ()
   "Contract the region inward to the previous (smaller) sexp,
-undoing the last `my-expand-to-parent-sexp' step."
+undoing the last `my-expand-to-parent-sexp' step. If already at
+the smallest sexp (depth 0), collapse back to the original point
+with no region."
   (interactive)
-  (if (or (not (my--sexp-continuing-p)) (<= my-sexp-depth 0))
-      (message "No smaller sexp to contract to")
+  (cond
+   ((or (not (my--sexp-continuing-p)) (< my-sexp-depth 0))
+    (message "No smaller sexp to contract to"))
+   ((= my-sexp-depth 0)
+    (setq my-sexp-depth -1)
+    (deactivate-mark)
+    (goto-char my-sexp-locus))
+   (t
     (let* ((new-depth (1- my-sexp-depth))
            (bounds (my--sexp-bounds-at-depth my-sexp-locus new-depth)))
       (if (not bounds)
@@ -453,8 +470,7 @@ undoing the last `my-expand-to-parent-sexp' step."
         (setq my-sexp-depth new-depth)
         (set-mark (car bounds))
         (goto-char (cdr bounds))
-        (activate-mark)))))
-
+        (activate-mark))))))
 
 
 
