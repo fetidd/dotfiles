@@ -48,12 +48,26 @@
     (end-of-line)
     (forward-line 1)))
 
-(defun smart-beginning-of-line ()
-  "Move point to first non-whitespace character, or BOL if already there."
+(defun narrow-or-widen-dwim (p)
+  "Widen if narrowed; else narrow to region, defun, or org subtree."
+  (interactive "P")
+  (cond ((and (buffer-narrowed-p) (not p)) (widen))
+        ((region-active-p) (narrow-to-region (region-beginning) (region-end)))
+        ((derived-mode-p 'org-mode) (org-narrow-to-subtree))
+        ((derived-mode-p 'prog-mode) (narrow-to-defun))
+        (t (error "Nothing to narrow to"))))
+
+(defun rename-current-buffer-file ()
+  "Rename current buffer and the file it is visiting."
   (interactive)
-  (let ((oldpos (point)))
-    (back-to-indentation)
-    (and (= oldpos (point)) (beginning-of-line))))
+  (let* ((filename (buffer-file-name)))
+    (unless (and filename (file-exists-p filename))
+      (error "Buffer is not visiting a file"))
+    (let ((new-name (read-file-name "New name: " (file-name-directory filename))))
+      (rename-file filename new-name 1)
+      (rename-buffer new-name)
+      (set-visited-file-name new-name)
+      (set-buffer-modified-p nil))))
 
 (defun duplicate-line-or-region (&optional n)
   "Duplicate current line, or region if active, N times."
@@ -69,48 +83,12 @@
         (goto-char end) (newline) (insert region) (setq end (point)))
       (goto-char (+ origin (* (length region) (or n 1)) (or n 1))))))
 
-(defun rename-current-buffer-file ()
-  "Rename current buffer and the file it is visiting."
+(defun smart-beginning-of-line ()
+  "Move point to first non-whitespace character, or BOL if already there."
   (interactive)
-  (let* ((filename (buffer-file-name)))
-    (unless (and filename (file-exists-p filename))
-      (error "Buffer is not visiting a file"))
-    (let ((new-name (read-file-name "New name: " (file-name-directory filename))))
-      (rename-file filename new-name 1)
-      (rename-buffer new-name)
-      (set-visited-file-name new-name)
-      (set-buffer-modified-p nil))))
-
-(defun toggle-window-split ()
-  "Swap between horizontal and vertical split for exactly two windows."
-  (interactive)
-  (when (= (count-windows) 2)
-    (let* ((this-win-buffer (window-buffer))
-           (next-win-buffer (window-buffer (next-window)))
-           (this-win-edges (window-edges (selected-window)))
-           (next-win-edges (window-edges (next-window)))
-           (this-win-2nd (not (and (<= (car this-win-edges) (car next-win-edges))
-                                    (<= (cadr this-win-edges) (cadr next-win-edges)))))
-           (splitter (if (= (car this-win-edges) (car (window-edges (next-window))))
-                         'split-window-horizontally
-                       'split-window-vertically)))
-      (delete-other-windows)
-      (let ((first-win (selected-window)))
-        (funcall splitter)
-        (when this-win-2nd (other-window 1))
-        (set-window-buffer (selected-window) this-win-buffer)
-        (set-window-buffer (next-window) next-win-buffer)
-        (select-window first-win)
-        (when this-win-2nd (other-window 1))))))
-
-(defun narrow-or-widen-dwim (p)
-  "Widen if narrowed; else narrow to region, defun, or org subtree."
-  (interactive "P")
-  (cond ((and (buffer-narrowed-p) (not p)) (widen))
-        ((region-active-p) (narrow-to-region (region-beginning) (region-end)))
-        ((derived-mode-p 'org-mode) (org-narrow-to-subtree))
-        ((derived-mode-p 'prog-mode) (narrow-to-defun))
-        (t (error "Nothing to narrow to"))))
+  (let ((oldpos (point)))
+    (back-to-indentation)
+    (and (= oldpos (point)) (beginning-of-line))))
 
 (defun delete-whole-line ()
   "Delete the whole line at point without adding it to the kill ring."
@@ -178,7 +156,6 @@ DIRECTION is -1 to move up, 1 to move down."
   (interactive)
   (move-line--internal 1))
 
- 
 (defun my/incdec-digit-or-region (delta)
   "If region is active and contains a plain integer, inc/dec it by DELTA.
 Otherwise, inc/dec the single digit at point by DELTA (no wraparound).
@@ -225,61 +202,6 @@ call will operate on the whole number via the region branch."
   "Decrement digit at point by N (default 1), or region's integer if active."
   (interactive "p")
   (my/incdec-digit-or-region (- (or n 1))))
-
-(defvar-local my/sexp-nav-stack nil
-  "Stack of markers recording point's position just before each
-`my/sexp-up' move, so `my/sexp-down' can retrace the same path.")
-
-(add-hook 'post-command-hook #'my/sexp-nav-maybe-reset)
-
-(defun my/sexp-up (&optional arg)
-  "Like `backward-up-list', but remember where point was each time,
-so `my/sexp-down' can descend back to exactly that spot."
-  (interactive "p")
-  (dotimes (_ (or arg 1))
-    (push (point-marker) my/sexp-nav-stack)
-    (backward-up-list)))
-
-(defun my/sexp--marker-in-next-sexp-p (marker)
-  "Non-nil if MARKER lies within the sexp `down-list' would enter next."
-  (condition-case nil
-      (save-excursion
-        (down-list)
-        (let* ((open-pos (1- (point)))
-               (close-pos (scan-sexps open-pos 1)))
-          (and close-pos
-               (<= open-pos (marker-position marker) close-pos))))
-    (error nil)))
-
-(defun my/sexp-down (&optional arg)
-  "Like `down-list', but if the top of `my/sexp-nav-stack' sits inside
-the sexp about to be entered, jump straight back to that remembered
-position instead of just descending to the nearest subform."
-  (interactive "p")
-  (dotimes (_ (or arg 1))
-    (let ((target (car my/sexp-nav-stack)))
-      (if (and target
-               (marker-buffer target)
-               (eq (marker-buffer target) (current-buffer))
-               (my/sexp--marker-in-next-sexp-p target))
-          (progn
-            (pop my/sexp-nav-stack)
-            (goto-char (marker-position target))
-            (set-marker target nil))
-        (down-list)))))
-
-(defun my/sexp-nav-reset ()
-  "Clear the up/down navigation history."
-  (interactive)
-  (dolist (m my/sexp-nav-stack) (set-marker m nil))
-  (setq my/sexp-nav-stack nil))
-
-(defun my/sexp-nav-maybe-reset ()
-  "Reset `my/sexp-nav-stack' unless the just-run command was part of
-the up/down navigation sequence."
-  (unless (memq this-command '(my/sexp-up my/sexp-down))
-    (when my/sexp-nav-stack
-      (my/sexp-nav-reset))))
 
 (require 'subr-x)  ;; for string-trim
 
@@ -384,9 +306,8 @@ pair, does nothing and reports an error via `message'."
       (my--collapse-bracketed start end))
      (t
       (my--expand-bracketed start end)))))
-	  
-	  
-;; functions to expand and contract selection of current sexp  
+
+
 (defvar-local my-sexp-locus nil
   "Buffer position remembered as the origin point for sexp
 expand/contract. Bounds at any DEPTH are recomputed from here.")
@@ -471,8 +392,93 @@ with no region."
         (set-mark (car bounds))
         (goto-char (cdr bounds))
         (activate-mark))))))
+		
+(defvar-local my/sexp-nav-stack nil
+  "Stack of markers recording point's position just before each
+`my/sexp-up' move, so `my/sexp-down' can retrace the same path.")
 
+(defun my/sexp--nav-continuing-p ()
+  "Non-nil if the previous command was `my/sexp-up' or `my/sexp-down',
+meaning it's safe to keep using the stored navigation stack."
+  (memq last-command '(my/sexp-up my/sexp-down)))
 
+(defun my/sexp--goto-safe-start ()
+  "Move point out of any enclosing string or comment.
+`backward-up-list'/`down-list' assume point is not inside a string
+or comment, and misbehave if it is (they haven't seen the opening
+delimiter, so they lose track of the syntactic state). `syntax-ppss'
+parses properly from a safe point, so use it to detect this and
+reposition to the start of the string or comment before scanning."
+  (let ((start (nth 8 (syntax-ppss))))
+    (when start
+      (goto-char start))))
+
+(defun my/sexp-up (&optional arg)
+  "Like `backward-up-list', but remember where point was each time,
+so `my/sexp-down' can descend back to exactly that spot.
+
+Call repeatedly (or with ARG) to move up several levels; a matching
+number of `my/sexp-down' calls will retrace the same path back down.
+If the previous command wasn't part of this up/down sequence, the
+stack is reset first, so navigation always starts from a clean state."
+  (interactive "p")
+  (unless (my/sexp--nav-continuing-p)
+    (my/sexp-nav-reset))
+  (condition-case nil
+      (dotimes (_ (or arg 1))
+        (my/sexp--goto-safe-start)
+        (push (point-marker) my/sexp-nav-stack)
+        (backward-up-list))
+    (scan-error
+     (message "No further enclosing sexp found")
+     ;; Undo the marker pushed for the attempt that failed.
+     (let ((m (pop my/sexp-nav-stack)))
+       (when m (set-marker m nil))))))
+
+(defun my/sexp--marker-in-next-sexp-p (marker)
+  "Non-nil if MARKER lies within the sexp `down-list' would enter next."
+  (condition-case nil
+      (save-excursion
+        (my/sexp--goto-safe-start)
+        (down-list)
+        (let* ((open-pos (1- (point)))
+               (close-pos (scan-sexps open-pos 1)))
+          (and close-pos
+               (<= open-pos (marker-position marker) close-pos))))
+    (error nil)))
+
+(defun my/sexp-down (&optional arg)
+  "Like `down-list', but if the top of `my/sexp-nav-stack' sits inside
+the sexp about to be entered, jump straight back to that remembered
+position instead of just descending to the nearest subform.
+
+If the previous command wasn't part of an up/down sequence, the
+stack is reset first, so a bare `my/sexp-down' always behaves like
+plain `down-list'."
+  (interactive "p")
+  (unless (my/sexp--nav-continuing-p)
+    (my/sexp-nav-reset))
+  (condition-case nil
+      (dotimes (_ (or arg 1))
+        (let ((target (car my/sexp-nav-stack)))
+          (if (and target
+                   (marker-buffer target)
+                   (eq (marker-buffer target) (current-buffer))
+                   (my/sexp--marker-in-next-sexp-p target))
+              (progn
+                (pop my/sexp-nav-stack)
+                (goto-char (marker-position target))
+                (set-marker target nil))
+            (my/sexp--goto-safe-start)
+            (down-list))))
+    (scan-error
+     (message "No sexp to descend into"))))
+
+(defun my/sexp-nav-reset ()
+  "Clear the up/down navigation history."
+  (interactive)
+  (dolist (m my/sexp-nav-stack) (set-marker m nil))
+  (setq my/sexp-nav-stack nil))
 
 ;; keep this at the end!
 (provide 'my-functions)
